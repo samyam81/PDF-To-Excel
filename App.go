@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"strings"
+
 	"github.com/gen2brain/go-fitz"
 	"github.com/360EntSecGroup-Skylar/excelize"
 )
@@ -26,65 +27,33 @@ func initWorkbook(outputPath string) *excelize.File {
 
 func writeTextBoxesToExcel(pdfPath string, xlsx *excelize.File) {
 	row := 1
-	pdfDocument, err := fitz.New(pdfPath)
+	pdfDocument, err := fitz.Open(pdfPath)
 	if err != nil {
-		fmt.Println("Error:", err)
+		fmt.Println("Error opening PDF:", err)
 		return
 	}
 	defer pdfDocument.Close()
+
 	for i := 0; i < pdfDocument.NumPage(); i++ {
 		page := pdfDocument.Page(i)
-		boxes := page.TextBlocks()
-		textBoxes := make([]map[string]interface{}, len(boxes))
-		for i, box := range boxes {
-			textBoxes[i] = map[string]interface{}{
-				"x0":    box[0],
-				"y0":    box[1],
-				"x1":    box[2],
-				"y1":    box[3],
-				"text":  strings.Replace(box.Text, "\n", "", -1),
-				"index": i,
-			}
+		textBlocks, err := page.TextBlocks()
+		if err != nil {
+			fmt.Println("Error getting text blocks:", err)
+			continue
 		}
-		groupedTextBoxes := groupMapsByRange(textBoxes)
-		for _, group := range groupedTextBoxes {
-			col := 0
-			for _, element := range group {
-				xlsx.SetCellValue("Sheet1", fmt.Sprintf("%c%d", 'A'+col, row), element["text"])
-				col++
+
+		for _, block := range textBlocks {
+			// Remove newlines from the text
+			text := strings.Replace(block.Text, "\n", "", -1)
+			// Set cell value in Excel sheet
+			err := xlsx.SetCellValue("Sheet1", fmt.Sprintf("%c%d", 'A', row), text)
+			if err != nil {
+				fmt.Println("Error setting cell value:", err)
+				continue
 			}
 			row++
 		}
 	}
-}
-
-func groupMapsByRange(mapList []map[string]interface{}) [][]map[string]interface{} {
-	sortedMaps := make([]map[string]interface{}, len(mapList))
-	copy(sortedMaps, mapList)
-	for i := 0; i < len(sortedMaps); i++ {
-		for j := i + 1; j < len(sortedMaps); j++ {
-			if sortedMaps[i]["y0"].(float64) > sortedMaps[j]["y0"].(float64) {
-				sortedMaps[i], sortedMaps[j] = sortedMaps[j], sortedMaps[i]
-			}
-		}
-	}
-	groups := [][]map[string]interface{}{}
-	for _, d := range sortedMaps {
-		addedToExistingGroup := false
-		for _, group := range groups {
-			if d["y0"].(float64) >= group[0]["y0"].(float64) && d["y0"].(float64) <= group[len(group)-1]["y1"].(float64) {
-				if d["y1"].(float64) > OMIT_FIRST_LINES_COORDINATE {
-					group = append(group, d)
-					addedToExistingGroup = true
-					break
-				}
-			}
-		}
-		if !addedToExistingGroup {
-			groups = append(groups, []map[string]interface{}{d})
-		}
-	}
-	return groups
 }
 
 func main() {
@@ -93,9 +62,15 @@ func main() {
 		fmt.Println("Please provide both input PDF path and output Excel path")
 		return
 	}
+
 	xlsx := initWorkbook(outputPath)
 	writeTextBoxesToExcel(pdfPath, xlsx)
+
+	// Save the Excel file
 	if err := xlsx.SaveAs(outputPath); err != nil {
-		fmt.Println("Error:", err)
+		fmt.Println("Error saving Excel file:", err)
+		return
 	}
+
+	fmt.Println("Excel file successfully created:", outputPath)
 }
